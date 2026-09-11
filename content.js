@@ -50,35 +50,36 @@ function initExtension() {
                 contentElement = document.body;
             }
 
-            // Ensure the element and its children aren't hiding overflow which clips PDF generation
+            // Ensure the element and its ancestors aren't hiding overflow which clips PDF generation.
+            // We do NOT do this recursively to children, because complex code editors 
+            // (like Monaco) rely on hidden overflow and will crash/hang if forced visible.
             const originalStyles = [];
             
-            // Helper to recursively fix overflow issues for printing
-            function fixOverflow(element) {
-                const style = window.getComputedStyle(element);
-                if (style.overflow === 'hidden' || style.overflow === 'auto' || style.overflow === 'scroll' || 
-                    style.overflowY === 'hidden' || style.overflowY === 'auto' || style.overflowY === 'scroll') {
-                    
-                    originalStyles.push({
-                        el: element,
-                        overflow: element.style.overflow,
-                        overflowY: element.style.overflowY,
-                        height: element.style.height,
-                        maxHeight: element.style.maxHeight
-                    });
+            function fixAncestorsOverflow(element) {
+                let current = element;
+                while (current && current !== document.documentElement) {
+                    const style = window.getComputedStyle(current);
+                    if (style.overflow === 'hidden' || style.overflow === 'auto' || style.overflow === 'scroll' || 
+                        style.overflowY === 'hidden' || style.overflowY === 'auto' || style.overflowY === 'scroll') {
+                        
+                        originalStyles.push({
+                            el: current,
+                            overflow: current.style.overflow,
+                            overflowY: current.style.overflowY,
+                            height: current.style.height,
+                            maxHeight: current.style.maxHeight
+                        });
 
-                    element.style.setProperty('overflow', 'visible', 'important');
-                    element.style.setProperty('overflow-y', 'visible', 'important');
-                    element.style.setProperty('height', 'auto', 'important');
-                    element.style.setProperty('max-height', 'none', 'important');
-                }
-                
-                for (let i = 0; i < element.children.length; i++) {
-                    fixOverflow(element.children[i]);
+                        current.style.setProperty('overflow', 'visible', 'important');
+                        current.style.setProperty('overflow-y', 'visible', 'important');
+                        current.style.setProperty('height', 'auto', 'important');
+                        current.style.setProperty('max-height', 'none', 'important');
+                    }
+                    current = current.parentElement;
                 }
             }
 
-            fixOverflow(contentElement);
+            fixAncestorsOverflow(contentElement);
 
             // Get the title for the filename
             let title = document.title || 'Educative_Lesson';
