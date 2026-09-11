@@ -101,8 +101,16 @@ function initExtension() {
                     windowWidth: contentElement.scrollWidth, // Ensures full width is captured
                     scrollY: 0, // Prevent cutoff
                     ignoreElements: (element) => {
-                        // Ignore iframes to prevent embedded VS Code from reloading and redirecting to auth flows
-                        return element.tagName && element.tagName.toLowerCase() === 'iframe';
+                        const tag = element.tagName ? element.tagName.toLowerCase() : '';
+                        // Ignore iframes (auth redirects) and canvases (Monaco minimaps often taint the render)
+                        return tag === 'iframe' || tag === 'canvas' || tag === 'video';
+                    },
+                    onclone: (clonedDoc) => {
+                        // Force CORS on all images to prevent cached non-CORS images from tainting
+                        const imgs = clonedDoc.querySelectorAll('img');
+                        for (let img of imgs) {
+                            img.crossOrigin = "anonymous";
+                        }
                     }
                 },
                 jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -129,6 +137,7 @@ function initExtension() {
             
         } catch (error) {
             console.error("PDF Generation Error:", error);
+            alert("PDF Generation Error: " + (error.message || error) + "\n\n(Please share this error message with me!)");
             btn.innerText = '❌ Error! Check Console';
             setTimeout(() => {
                 btn.innerText = originalText;
