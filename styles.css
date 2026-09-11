@@ -1,0 +1,34 @@
+#educative-pdf-download-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999999;
+  background-color: #5b42f3;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: all 0.2s ease-in-out;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#educative-pdf-download-btn:hover {
+  background-color: #4a33d1;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+}
+
+#educative-pdf-download-btn:active {
+  transform: translateY(0);
+}
+
+#educative-pdf-download-btn.downloading {
+  background-color: #8c8c8c;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
