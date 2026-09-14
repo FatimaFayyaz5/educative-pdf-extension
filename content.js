@@ -84,6 +84,124 @@ function initExtension() {
             // Wait for the browser to re-render expanded code blocks
             await new Promise(r => setTimeout(r, 500));
 
+            // ---- STEP 3b: Handle Monaco editors (virtualized code blocks) ----
+            // Monaco only renders visible lines. We need to extract the full code and replace with a <pre>.
+            btn.innerText = '⏳ Extracting code from editors...';
+            const savedEditors = [];
+
+            // Method 1: Try to access Monaco API directly
+            const monacoEditorEls = contentElement.querySelectorAll('.monaco-editor');
+            for (let editorEl of monacoEditorEls) {
+                try {
+                    let fullText = null;
+
+                    // Try to get the editor instance from Monaco's global API
+                    if (window.monaco && window.monaco.editor) {
+                        const editors = window.monaco.editor.getEditors();
+                        for (let ed of editors) {
+                            if (editorEl.contains(ed.getDomNode()) || ed.getDomNode() === editorEl) {
+                                fullText = ed.getModel().getValue();
+                                break;
+                            }
+                        }
+                    }
+
+                    // Method 2: Scroll through the editor to force-render all lines, then collect them
+                    if (!fullText) {
+                        const scrollable = editorEl.querySelector('.monaco-scrollable-element');
+                        const viewLines = editorEl.querySelector('.view-lines');
+                        if (scrollable && viewLines) {
+                            // Scroll to bottom and back to force Monaco to render all lines
+                            const origScrollTop = scrollable.scrollTop;
+                            const totalHeight = scrollable.scrollHeight;
+                            const step = 300;
+                            
+                            for (let pos = 0; pos <= totalHeight; pos += step) {
+                                scrollable.scrollTop = pos;
+                                await new Promise(r => setTimeout(r, 50));
+                            }
+                            scrollable.scrollTop = origScrollTop;
+                            await new Promise(r => setTimeout(r, 100));
+
+                            // Now collect all view-line text
+                            const lines = viewLines.querySelectorAll('.view-line');
+                            const lineMap = new Map();
+                            for (let line of lines) {
+                                const top = parseInt(line.style.top) || 0;
+                                lineMap.set(top, line.textContent);
+                            }
+                            // Sort by vertical position
+                            const sortedTops = [...lineMap.keys()].sort((a, b) => a - b);
+                            fullText = sortedTops.map(t => lineMap.get(t)).join('\n');
+                        }
+                    }
+
+                    // Method 3: Just grab whatever text is visible
+                    if (!fullText) {
+                        const viewLines = editorEl.querySelector('.view-lines');
+                        if (viewLines) {
+                            fullText = viewLines.textContent;
+                        }
+                    }
+
+                    if (fullText && fullText.trim().length > 0) {
+                        // Find the outermost container for this editor (the whole code block widget)
+                        let container = editorEl;
+                        // Walk up to find the wrapper that includes the header bar (filename, language, etc.)
+                        for (let i = 0; i < 5; i++) {
+                            if (container.parentElement && container.parentElement !== contentElement) {
+                                container = container.parentElement;
+                            }
+                        }
+
+                        // Get the styling from visible code lines for matching colors
+                        const existingLine = editorEl.querySelector('.view-line');
+                        let bgColor = '#1e1e1e';
+                        let textColor = '#d4d4d4';
+                        if (existingLine) {
+                            const lineCs = window.getComputedStyle(existingLine);
+                            textColor = lineCs.color || textColor;
+                        }
+                        const editorBg = window.getComputedStyle(editorEl);
+                        bgColor = editorBg.backgroundColor || bgColor;
+
+                        // Create a replacement <pre> with all the code
+                        const pre = document.createElement('pre');
+                        pre.style.cssText = `
+                            background: ${bgColor};
+                            color: ${textColor};
+                            padding: 16px;
+                            border-radius: 6px;
+                            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+                            font-size: 13px;
+                            line-height: 1.5;
+                            white-space: pre-wrap;
+                            word-wrap: break-word;
+                            overflow: visible;
+                            margin: 0;
+                        `;
+                        // Add line numbers
+                        const lines = fullText.split('\n');
+                        const numbered = lines.map((line, i) => {
+                            const num = String(i + 1).padStart(3, ' ');
+                            return `${num}  ${line}`;
+                        }).join('\n');
+                        pre.textContent = numbered;
+
+                        savedEditors.push({ container: editorEl, original: editorEl.innerHTML });
+                        editorEl.innerHTML = '';
+                        editorEl.appendChild(pre);
+                        editorEl.style.setProperty('height', 'auto', 'important');
+                        editorEl.style.setProperty('max-height', 'none', 'important');
+                        editorEl.style.setProperty('overflow', 'visible', 'important');
+                    }
+                } catch (err) {
+                    console.warn('Could not extract code from Monaco editor:', err);
+                }
+            }
+
+            await new Promise(r => setTimeout(r, 300));
+
             // ---- STEP 4: Convert all images to base64 data URLs (bypass CORS entirely) ----
             btn.innerText = '⏳ Processing images...';
             const imgs = contentElement.querySelectorAll('img');
@@ -171,6 +289,9 @@ function initExtension() {
             }
             for (let item of savedImgs) {
                 item.el.src = item.originalSrc;
+            }
+            for (let item of savedEditors) {
+                item.container.innerHTML = item.original;
             }
 
             btn.innerText = '✅ Download Successful!';
