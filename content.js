@@ -84,88 +84,147 @@ function initExtension() {
             // Wait for the browser to re-render expanded code blocks
             await new Promise(r => setTimeout(r, 500));
 
-            // ---- STEP 3b: Handle Monaco editors (virtualized code blocks) ----
-            // Monaco only renders visible lines. We need to extract the full code and replace with a <pre>.
+            // ---- STEP 3b: Handle virtualized code editors ----
+            // Code editors (Monaco, CodeMirror, Ace, custom) often only render visible lines.
+            // We need to find them, extract full code, and replace with plain <pre> blocks.
             btn.innerText = '⏳ Extracting code from editors...';
             const savedEditors = [];
 
-            // Method 1: Try to access Monaco API directly
-            const monacoEditorEls = contentElement.querySelectorAll('.monaco-editor');
-            for (let editorEl of monacoEditorEls) {
+            // Strategy: Find ALL scrollable containers that look like code blocks.
+            // A code block typically: has monospace font, dark background, contains numbered lines.
+            const allContainers = contentElement.querySelectorAll('*');
+            const processedContainers = new Set();
+
+            for (let el of allContainers) {
+                // Skip if already processed or too small
+                if (processedContainers.has(el)) continue;
+                if (el.clientHeight < 50 || el.clientWidth < 200) continue;
+
+                const cs = window.getComputedStyle(el);
+                
+                // Detect code-like containers: has scrollbar OR contains code/pre elements
+                const isScrollable = el.scrollHeight > el.clientHeight + 20;
+                const hasCodeChildren = el.querySelector('pre, code, .view-line, .view-lines, .CodeMirror-line, .ace_line, .cm-line');
+                const hasMonoFont = cs.fontFamily.toLowerCase().includes('mono') || 
+                                    cs.fontFamily.toLowerCase().includes('courier') ||
+                                    cs.fontFamily.toLowerCase().includes('consolas');
+                const hasDarkBg = cs.backgroundColor && (
+                    cs.backgroundColor.includes('rgb(30') || cs.backgroundColor.includes('rgb(31') ||
+                    cs.backgroundColor.includes('rgb(33') || cs.backgroundColor.includes('rgb(34') ||
+                    cs.backgroundColor.includes('rgb(35') || cs.backgroundColor.includes('rgb(36') ||
+                    cs.backgroundColor.includes('rgb(37') || cs.backgroundColor.includes('rgb(38') ||
+                    cs.backgroundColor.includes('rgb(39') || cs.backgroundColor.includes('rgb(40') ||
+                    cs.backgroundColor.includes('rgb(41') || cs.backgroundColor.includes('rgb(42') ||
+                    cs.backgroundColor.includes('rgb(43') || cs.backgroundColor.includes('rgb(44') ||
+                    cs.backgroundColor.includes('rgb(45') || cs.backgroundColor.includes('rgb(46') ||
+                    cs.backgroundColor.includes('rgb(47') || cs.backgroundColor.includes('rgb(48') ||
+                    cs.backgroundColor.includes('rgb(49') || cs.backgroundColor.includes('rgb(50')
+                );
+
+                // Must look like a code block: either scrollable with code children, or dark bg with mono font
+                if (!((isScrollable && hasCodeChildren) || (hasDarkBg && (hasCodeChildren || hasMonoFont)))) continue;
+
+                // Check if this element is inside an already-processed parent
+                let isChild = false;
+                for (let processed of processedContainers) {
+                    if (processed.contains(el)) { isChild = true; break; }
+                }
+                if (isChild) continue;
+
                 try {
                     let fullText = null;
 
-                    // Try to get the editor instance from Monaco's global API
+                    // Method A: Try Monaco API
                     if (window.monaco && window.monaco.editor) {
-                        const editors = window.monaco.editor.getEditors();
-                        for (let ed of editors) {
-                            if (editorEl.contains(ed.getDomNode()) || ed.getDomNode() === editorEl) {
-                                fullText = ed.getModel().getValue();
+                        try {
+                            const editors = window.monaco.editor.getEditors();
+                            for (let ed of editors) {
+                                const domNode = ed.getDomNode();
+                                if (el.contains(domNode) || domNode === el || domNode.contains(el)) {
+                                    fullText = ed.getModel().getValue();
+                                    break;
+                                }
+                            }
+                        } catch(e) {}
+                    }
+
+                    // Method B: Look for a hidden textarea (many editors use one for input)
+                    if (!fullText) {
+                        const textarea = el.querySelector('textarea');
+                        if (textarea && textarea.value && textarea.value.trim().length > 10) {
+                            fullText = textarea.value;
+                        }
+                    }
+
+                    // Method C: Scroll through to force-render all lines, then collect
+                    if (!fullText) {
+                        // Find the internal scrollable element
+                        let scrollTarget = null;
+                        const candidates = [el, ...el.querySelectorAll('[class*="scroll"], [class*="Scroll"]')];
+                        for (let c of candidates) {
+                            if (c.scrollHeight > c.clientHeight + 20) {
+                                scrollTarget = c;
                                 break;
                             }
                         }
-                    }
 
-                    // Method 2: Scroll through the editor to force-render all lines, then collect them
-                    if (!fullText) {
-                        const scrollable = editorEl.querySelector('.monaco-scrollable-element');
-                        const viewLines = editorEl.querySelector('.view-lines');
-                        if (scrollable && viewLines) {
-                            // Scroll to bottom and back to force Monaco to render all lines
-                            const origScrollTop = scrollable.scrollTop;
-                            const totalHeight = scrollable.scrollHeight;
-                            const step = 300;
-                            
-                            for (let pos = 0; pos <= totalHeight; pos += step) {
-                                scrollable.scrollTop = pos;
-                                await new Promise(r => setTimeout(r, 50));
+                        if (scrollTarget) {
+                            const origTop = scrollTarget.scrollTop;
+                            const total = scrollTarget.scrollHeight;
+                            const lineTexts = new Map();
+
+                            // Scroll through in chunks to force virtualized content to render
+                            for (let pos = 0; pos <= total + 100; pos += 200) {
+                                scrollTarget.scrollTop = pos;
+                                await new Promise(r => setTimeout(r, 80));
+
+                                // Collect all line-like elements
+                                const lineEls = el.querySelectorAll(
+                                    '.view-line, .CodeMirror-line, .ace_line, .cm-line, ' +
+                                    '[class*="code-line"], [class*="codeLine"]'
+                                );
+                                for (let lineEl of lineEls) {
+                                    const top = parseInt(lineEl.style.top) || lineEl.offsetTop;
+                                    if (!lineTexts.has(top)) {
+                                        lineTexts.set(top, lineEl.textContent);
+                                    }
+                                }
                             }
-                            scrollable.scrollTop = origScrollTop;
+
+                            // Restore scroll position
+                            scrollTarget.scrollTop = origTop;
                             await new Promise(r => setTimeout(r, 100));
 
-                            // Now collect all view-line text
-                            const lines = viewLines.querySelectorAll('.view-line');
-                            const lineMap = new Map();
-                            for (let line of lines) {
-                                const top = parseInt(line.style.top) || 0;
-                                lineMap.set(top, line.textContent);
+                            if (lineTexts.size > 0) {
+                                const sorted = [...lineTexts.entries()].sort((a, b) => a[0] - b[0]);
+                                fullText = sorted.map(([_, text]) => text).join('\n');
                             }
-                            // Sort by vertical position
-                            const sortedTops = [...lineMap.keys()].sort((a, b) => a - b);
-                            fullText = sortedTops.map(t => lineMap.get(t)).join('\n');
                         }
                     }
 
-                    // Method 3: Just grab whatever text is visible
-                    if (!fullText) {
-                        const viewLines = editorEl.querySelector('.view-lines');
-                        if (viewLines) {
-                            fullText = viewLines.textContent;
+                    // Method D: Just get all text content from code/pre elements inside
+                    if (!fullText || fullText.trim().length < 10) {
+                        const preEl = el.querySelector('pre');
+                        const codeEl = el.querySelector('code');
+                        if (preEl && preEl.textContent.trim().length > 10) {
+                            fullText = preEl.textContent;
+                        } else if (codeEl && codeEl.textContent.trim().length > 10) {
+                            fullText = codeEl.textContent;
                         }
                     }
 
-                    if (fullText && fullText.trim().length > 0) {
-                        // Find the outermost container for this editor (the whole code block widget)
-                        let container = editorEl;
-                        // Walk up to find the wrapper that includes the header bar (filename, language, etc.)
-                        for (let i = 0; i < 5; i++) {
-                            if (container.parentElement && container.parentElement !== contentElement) {
-                                container = container.parentElement;
-                            }
-                        }
+                    // Only replace if we got meaningful text AND there's hidden content
+                    if (fullText && fullText.trim().length > 10 && isScrollable) {
+                        processedContainers.add(el);
 
-                        // Get the styling from visible code lines for matching colors
-                        const existingLine = editorEl.querySelector('.view-line');
+                        // Match the editor's visual style
                         let bgColor = '#1e1e1e';
                         let textColor = '#d4d4d4';
-                        if (existingLine) {
-                            const lineCs = window.getComputedStyle(existingLine);
-                            textColor = lineCs.color || textColor;
+                        const editorBg = window.getComputedStyle(el);
+                        if (editorBg.backgroundColor && editorBg.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+                            bgColor = editorBg.backgroundColor;
                         }
-                        const editorBg = window.getComputedStyle(editorEl);
-                        bgColor = editorBg.backgroundColor || bgColor;
 
-                        // Create a replacement <pre> with all the code
                         const pre = document.createElement('pre');
                         pre.style.cssText = `
                             background: ${bgColor};
@@ -180,7 +239,6 @@ function initExtension() {
                             overflow: visible;
                             margin: 0;
                         `;
-                        // Add line numbers
                         const lines = fullText.split('\n');
                         const numbered = lines.map((line, i) => {
                             const num = String(i + 1).padStart(3, ' ');
@@ -188,15 +246,15 @@ function initExtension() {
                         }).join('\n');
                         pre.textContent = numbered;
 
-                        savedEditors.push({ container: editorEl, original: editorEl.innerHTML });
-                        editorEl.innerHTML = '';
-                        editorEl.appendChild(pre);
-                        editorEl.style.setProperty('height', 'auto', 'important');
-                        editorEl.style.setProperty('max-height', 'none', 'important');
-                        editorEl.style.setProperty('overflow', 'visible', 'important');
+                        savedEditors.push({ container: el, original: el.innerHTML, height: el.style.height, maxHeight: el.style.maxHeight, overflow: el.style.overflow });
+                        el.innerHTML = '';
+                        el.appendChild(pre);
+                        el.style.setProperty('height', 'auto', 'important');
+                        el.style.setProperty('max-height', 'none', 'important');
+                        el.style.setProperty('overflow', 'visible', 'important');
                     }
                 } catch (err) {
-                    console.warn('Could not extract code from Monaco editor:', err);
+                    console.warn('Could not extract code from editor:', err);
                 }
             }
 
